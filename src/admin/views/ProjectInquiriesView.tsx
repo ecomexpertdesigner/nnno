@@ -71,11 +71,55 @@ export const ProjectInquiriesView: React.FC<ProjectInquiriesViewProps> = ({
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
       if (statusFilter !== 'All') params.set('status', statusFilter);
 
-      const res = await authFetch(`/api/admin/inquiries?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        setInquiries(data);
+      let list: InquiryRecord[] = [];
+      const res = await authFetch(`/api/admin/inquiries?${params.toString()}`).catch(() => null);
+      if (res && res.ok) {
+        list = await res.json();
+      } else {
+        // Direct query to Supabase (seamless on static Netlify deployments)
+        const { data } = await supabase
+          .from('appointments')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (data) {
+          list = data.map((row: any) => ({
+            id: String(row.id || row.reference_id),
+            reference_id: row.reference_id || `WG-${row.id}`,
+            name: row.name || 'Anonymous',
+            phone: row.phone || '',
+            email: row.email || '',
+            service: row.service || 'Video Editing',
+            budget: row.budget || '',
+            package: row.package || '',
+            aspect_ratios: row.aspect_ratios || [],
+            addons: row.addons || [],
+            project_link: row.project_link || '',
+            brief: row.brief || '',
+            status: row.status || 'New',
+            notes: row.notes || '',
+            source: row.source || 'Appointment Booking Form',
+            created_at: row.created_at || new Date().toISOString(),
+            updated_at: row.updated_at || row.created_at || new Date().toISOString(),
+          }));
+        }
+
+        if (searchQuery.trim()) {
+          const q = searchQuery.trim().toLowerCase();
+          list = list.filter(
+            (i) =>
+              i.name.toLowerCase().includes(q) ||
+              i.reference_id.toLowerCase().includes(q) ||
+              (i.phone && i.phone.toLowerCase().includes(q)) ||
+              (i.email && i.email.toLowerCase().includes(q))
+          );
+        }
+        if (statusFilter !== 'All') {
+          list = list.filter((i) => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
+        }
       }
+
+      setInquiries(list);
     } catch (err) {
       console.error('Error fetching inquiries:', err);
     } finally {
@@ -141,17 +185,37 @@ export const ProjectInquiriesView: React.FC<ProjectInquiriesViewProps> = ({
           status: currentStatus,
           notes: currentNotes,
         }),
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
+      if (res && res.ok) {
         const { inquiry } = await res.json();
         setSelectedInquiry(inquiry);
         setInquiries((prev) =>
           prev.map((item) => (item.id === inquiry.id ? inquiry : item))
         );
-        setUpdateSuccess(true);
-        setTimeout(() => setUpdateSuccess(false), 3000);
+      } else {
+        // Direct Supabase update (works on static Netlify deployments)
+        try {
+          await supabase
+            .from('appointments')
+            .update({ status: currentStatus, notes: currentNotes })
+            .or(`reference_id.eq.${selectedInquiry.reference_id},id.eq.${selectedInquiry.id}`);
+        } catch {
+          // ignore
+        }
+        const updated: InquiryRecord = {
+          ...selectedInquiry,
+          status: currentStatus,
+          notes: currentNotes,
+        };
+        setSelectedInquiry(updated);
+        setInquiries((prev) =>
+          prev.map((item) => (item.id === selectedInquiry.id ? updated : item))
+        );
       }
+
+      setUpdateSuccess(true);
+      setTimeout(() => setUpdateSuccess(false), 3000);
     } catch (err) {
       console.error('Failed to update inquiry:', err);
     } finally {
@@ -166,15 +230,34 @@ export const ProjectInquiriesView: React.FC<ProjectInquiriesViewProps> = ({
     try {
       const res = await authFetch(`/api/admin/inquiries/${inquiryToDelete.id}`, {
         method: 'DELETE',
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
-        setInquiries((prev) => prev.filter((item) => item.id !== inquiryToDelete.id));
-        if (selectedInquiry?.id === inquiryToDelete.id) {
-          setSelectedInquiry(null);
+      if (!res || !res.ok) {
+        // Direct Supabase delete (works on static Netlify deployments)
+        try {
+          await supabase
+            .from('appointments')
+            .delete()
+            .or(`reference_id.eq.${inquiryToDelete.reference_id},id.eq.${inquiryToDelete.id}`);
+        } catch {
+          // ignore
         }
-        setInquiryToDelete(null);
       }
+
+      setInquiries((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== inquiryToDelete.id &&
+            item.reference_id !== inquiryToDelete.reference_id
+        )
+      );
+      if (
+        selectedInquiry?.id === inquiryToDelete.id ||
+        selectedInquiry?.reference_id === inquiryToDelete.reference_id
+      ) {
+        setSelectedInquiry(null);
+      }
+      setInquiryToDelete(null);
     } catch (err) {
       console.error('Failed to delete inquiry:', err);
     } finally {

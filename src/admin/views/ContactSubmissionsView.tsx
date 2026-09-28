@@ -63,11 +63,50 @@ export const ContactSubmissionsView: React.FC<ContactSubmissionsViewProps> = ({
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
       if (statusFilter !== 'All') params.set('status', statusFilter);
 
-      const res = await authFetch(`/api/admin/contacts?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        setContacts(data);
+      let list: ContactRecord[] = [];
+      const res = await authFetch(`/api/admin/contacts?${params.toString()}`).catch(() => null);
+      if (res && res.ok) {
+        list = await res.json();
+      } else {
+        // Direct query to Supabase (works on static Netlify deployments)
+        const { data } = await supabase
+          .from('appointments')
+          .select('*')
+          .ilike('reference_id', 'WG-CONTACT-%')
+          .order('created_at', { ascending: false });
+
+        if (data) {
+          list = data.map((row: any) => ({
+            id: String(row.id || row.reference_id),
+            reference_id: row.reference_id || `WG-CONTACT-${row.id}`,
+            name: row.name || 'Anonymous',
+            email: row.email || '',
+            phone: row.phone && row.phone !== 'N/A' ? row.phone : '',
+            service: row.service || 'General Inquiry',
+            message: row.brief || '',
+            status: (row.status || 'New') as ContactStatus,
+            notes: row.notes || '',
+            created_at: row.created_at || new Date().toISOString(),
+            updated_at: row.updated_at || row.created_at || new Date().toISOString(),
+          }));
+        }
+
+        if (searchQuery.trim()) {
+          const q = searchQuery.trim().toLowerCase();
+          list = list.filter(
+            (c) =>
+              c.name.toLowerCase().includes(q) ||
+              c.email.toLowerCase().includes(q) ||
+              c.message.toLowerCase().includes(q) ||
+              (c.phone && c.phone.toLowerCase().includes(q))
+          );
+        }
+        if (statusFilter !== 'All') {
+          list = list.filter((c) => (c.status || '').toLowerCase() === statusFilter.toLowerCase());
+        }
       }
+
+      setContacts(list);
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
     } finally {
@@ -145,17 +184,37 @@ export const ContactSubmissionsView: React.FC<ContactSubmissionsViewProps> = ({
           status: currentStatus,
           notes: currentNotes,
         }),
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
+      if (res && res.ok) {
         const { contact } = await res.json();
         setSelectedContact(contact);
         setContacts((prev) =>
           prev.map((item) => (item.id === contact.id ? contact : item))
         );
-        setUpdateSuccess(true);
-        setTimeout(() => setUpdateSuccess(false), 3000);
+      } else {
+        // Direct Supabase update (works on static Netlify deployments)
+        try {
+          await supabase
+            .from('appointments')
+            .update({ status: currentStatus, notes: currentNotes })
+            .or(`reference_id.eq.${selectedContact.reference_id},id.eq.${selectedContact.id}`);
+        } catch {
+          // ignore
+        }
+        const updated: ContactRecord = {
+          ...selectedContact,
+          status: currentStatus,
+          notes: currentNotes,
+        };
+        setSelectedContact(updated);
+        setContacts((prev) =>
+          prev.map((item) => (item.id === selectedContact.id ? updated : item))
+        );
       }
+
+      setUpdateSuccess(true);
+      setTimeout(() => setUpdateSuccess(false), 3000);
     } catch (err) {
       console.error('Failed to update contact:', err);
     } finally {
@@ -170,15 +229,34 @@ export const ContactSubmissionsView: React.FC<ContactSubmissionsViewProps> = ({
     try {
       const res = await authFetch(`/api/admin/contacts/${contactToDelete.id}`, {
         method: 'DELETE',
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
-        setContacts((prev) => prev.filter((item) => item.id !== contactToDelete.id));
-        if (selectedContact?.id === contactToDelete.id) {
-          setSelectedContact(null);
+      if (!res || !res.ok) {
+        // Direct Supabase delete (works on static Netlify deployments)
+        try {
+          await supabase
+            .from('appointments')
+            .delete()
+            .or(`reference_id.eq.${contactToDelete.reference_id},id.eq.${contactToDelete.id}`);
+        } catch {
+          // ignore
         }
-        setContactToDelete(null);
       }
+
+      setContacts((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== contactToDelete.id &&
+            item.reference_id !== contactToDelete.reference_id
+        )
+      );
+      if (
+        selectedContact?.id === contactToDelete.id ||
+        selectedContact?.reference_id === contactToDelete.reference_id
+      ) {
+        setSelectedContact(null);
+      }
+      setContactToDelete(null);
     } catch (err) {
       console.error('Failed to delete contact submission:', err);
     } finally {

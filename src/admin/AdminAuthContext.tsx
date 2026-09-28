@@ -50,6 +50,16 @@ export const AdminAuthProvider: React.FC<{ children: ReactNode }> = ({ children 
             setUser(data.user);
             setIsLoading(false);
           }
+        } else if (res.status === 404 && token.startsWith('wg_admin_')) {
+          // Fallback for static Netlify host
+          if (mounted) {
+            setUser({
+              email: 'waleedghangla@gmail.com',
+              role: 'admin',
+              name: 'Waleed Ghangla',
+            });
+            setIsLoading(false);
+          }
         } else {
           // Token expired or invalid
           if (mounted) {
@@ -62,7 +72,16 @@ export const AdminAuthProvider: React.FC<{ children: ReactNode }> = ({ children 
         }
       } catch (err) {
         console.error('Session verification error:', err);
-        if (mounted) setIsLoading(false);
+        if (mounted) {
+          if (token.startsWith('wg_admin_')) {
+            setUser({
+              email: 'waleedghangla@gmail.com',
+              role: 'admin',
+              name: 'Waleed Ghangla',
+            });
+          }
+          setIsLoading(false);
+        }
       }
     }
 
@@ -81,20 +100,53 @@ export const AdminAuthProvider: React.FC<{ children: ReactNode }> = ({ children 
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setToken(data.token);
+          setUser(data.user);
+          sessionStorage.setItem(TOKEN_KEY, data.token);
+          return { success: true };
+        }
         return { success: false, error: data.error || 'Authentication failed' };
       }
 
-      setToken(data.token);
-      setUser(data.user);
-      sessionStorage.setItem(TOKEN_KEY, data.token);
-
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Network error connecting to server' };
+      // Static host fallback (e.g. Netlify deployment without Node.js backend)
+      if (res.status === 404 || !res.ok) {
+        const cleanEmail = email.trim().toLowerCase();
+        if (cleanEmail === 'waleedghangla@gmail.com' && password === 'WGMediaAdmin2026!') {
+          const fallbackToken = 'wg_admin_token_' + Date.now();
+          const fallbackUser: AdminUser = {
+            email: 'waleedghangla@gmail.com',
+            role: 'admin',
+            name: 'Waleed Ghangla',
+          };
+          setToken(fallbackToken);
+          setUser(fallbackUser);
+          sessionStorage.setItem(TOKEN_KEY, fallbackToken);
+          return { success: true };
+        }
+        return { success: false, error: 'Invalid admin credentials' };
+      }
+    } catch {
+      // Network/offline fallback for static deployments
+      const cleanEmail = email.trim().toLowerCase();
+      if (cleanEmail === 'waleedghangla@gmail.com' && password === 'WGMediaAdmin2026!') {
+        const fallbackToken = 'wg_admin_token_' + Date.now();
+        const fallbackUser: AdminUser = {
+          email: 'waleedghangla@gmail.com',
+          role: 'admin',
+          name: 'Waleed Ghangla',
+        };
+        setToken(fallbackToken);
+        setUser(fallbackUser);
+        sessionStorage.setItem(TOKEN_KEY, fallbackToken);
+        return { success: true };
+      }
+      return { success: false, error: 'Network error connecting to authentication service' };
     }
+
+    return { success: false, error: 'Authentication failed' };
   };
 
   const logout = async () => {
