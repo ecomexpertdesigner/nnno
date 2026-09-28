@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix  Nova Frame Media ",
+  "description": "Premium video editing, motion graphics, and cinematic content agency turning ideas into visual impact for brands and creators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
